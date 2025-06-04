@@ -13,6 +13,12 @@ app = Flask(__name__)
 def index():
     return '✅ Helmet Detection API is live'
 
+
+@app.route('/healthz')
+def healthz():
+    return jsonify({"status": "ok"})
+
+
 # Add yolov5 to path
 sys.path.append('./yolov5')
 
@@ -93,6 +99,9 @@ def process_frame():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))  # For Render
     app.run(host="0.0.0.0", port=port)
+
+
+
 
 
 
