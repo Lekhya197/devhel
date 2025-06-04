@@ -1,0 +1,15 @@
+flask
+torch
+opencv-python-headless
+numpy
+requests
+torch
+torchvision
+torchaudio
+pandas
+ultralytics
+Pillow
+matplotlib
+pyyaml
+seaborn
+deep_sort_realtime
