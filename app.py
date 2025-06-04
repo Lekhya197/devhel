@@ -9,6 +9,9 @@ import requests
 
 # Setup Flask app
 app = Flask(__name__)
+@app.route('/')
+def index():
+    return '✅ Helmet Detection API is live'
 
 # Add yolov5 to path
 sys.path.append('./yolov5')
