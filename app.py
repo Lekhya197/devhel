@@ -1,18 +1,29 @@
 import os
-from flask import Flask, request, jsonify
+import sys
 import torch
+from flask import Flask, request, jsonify
 from PIL import Image
-import io
 import numpy as np
-# Optional: for telegram alerts
+import io
 import requests
 
+# Setup Flask app
 app = Flask(__name__)
 
-# Load your YOLOv5 model once
-model = torch.hub.load('ultralytics/yolov5', 'custom', path='best.pt', force_reload=False)
+# Add yolov5 to path
+sys.path.append('./yolov5')
 
-# Telegram Bot Config (fill your token and chat id or leave empty)
+# Import YOLOv5 modules
+from models.experimental import attempt_load
+from utils.general import non_max_suppression, scale_coords
+from utils.augmentations import letterbox
+
+# Load model
+device = torch.device('cpu')
+model = attempt_load('best.pt', device)
+model.eval()
+
+# Telegram Bot Config
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
@@ -37,30 +48,46 @@ def process_frame():
     try:
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+        orig_img = np.array(img)
     except Exception as e:
         return jsonify({'error': 'Invalid image'}), 400
 
-    # Run detection
-    results = model(img)
-    preds = results.pandas().xyxy[0]  # Pandas DataFrame of predictions
+    # Preprocess
+    img_resized = letterbox(orig_img, new_shape=640)[0]
+    img_resized = img_resized.transpose((2, 0, 1))  # HWC to CHW
+    img_resized = np.ascontiguousarray(img_resized)
 
-    # Extract relevant info
+    img_tensor = torch.from_numpy(img_resized).to(device).float()
+    img_tensor /= 255.0
+    if img_tensor.ndimension() == 3:
+        img_tensor = img_tensor.unsqueeze(0)
+
+    # Inference
+    with torch.no_grad():
+        pred = model(img_tensor)[0]
+        pred = non_max_suppression(pred, conf_thres=0.25, iou_thres=0.45)
+
+    # Post-process
     detections = []
     no_helmet_detected = False
-    for _, row in preds.iterrows():
-        label = row['name']
-        conf = float(row['confidence'])
-        bbox = [float(row['xmin']), float(row['ymin']), float(row['xmax']), float(row['ymax'])]
-        detections.append({'label': label, 'confidence': conf, 'bbox': bbox})
-        if label == 'no_helmet':
-            no_helmet_detected = True
+    for det in pred:
+        if len(det):
+            det[:, :4] = scale_coords(img_tensor.shape[2:], det[:, :4], orig_img.shape).round()
+            for *xyxy, conf, cls in det:
+                label = model.names[int(cls)]
+                confidence = float(conf)
+                bbox = [float(x.item()) for x in xyxy]
+                detections.append({'label': label, 'confidence': confidence, 'bbox': bbox})
+                if label == 'no_helmet':
+                    no_helmet_detected = True
 
-    # Send telegram alert if no helmet detected
+    # Telegram Alert
     if no_helmet_detected:
-        send_telegram_alert("Alert: No helmet detected!")
+        send_telegram_alert("🚨 Alert: No helmet detected!")
 
     return jsonify({'detections': detections})
 
 if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5050))  # change 5000 → 5050
     app.run(host='0.0.0.0', port=port)
+
