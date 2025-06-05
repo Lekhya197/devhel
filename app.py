@@ -60,13 +60,14 @@ def process_frame():
     try:
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+        img = img.resize((640, 640))  # Resize image here
         orig_img = np.array(img)
     except Exception as e:
         return jsonify({'error': 'Invalid image'}), 400
 
-    # Preprocess
+    # preprocess with letterbox after resizing if you want
     img_resized = letterbox(orig_img, new_shape=640)[0]
-    img_resized = img_resized.transpose((2, 0, 1))  # HWC to CHW
+    img_resized = img_resized.transpose((2, 0, 1))
     img_resized = np.ascontiguousarray(img_resized)
 
     img_tensor = torch.from_numpy(img_resized).to(device).float()
@@ -74,12 +75,10 @@ def process_frame():
     if img_tensor.ndimension() == 3:
         img_tensor = img_tensor.unsqueeze(0)
 
-    # Inference
     with torch.no_grad():
         pred = model(img_tensor)[0]
         pred = non_max_suppression(pred, conf_thres=0.25, iou_thres=0.45)
 
-    # Post-process
     detections = []
     no_helmet_detected = False
     for det in pred:
@@ -93,7 +92,6 @@ def process_frame():
                 if label == 'no_helmet':
                     no_helmet_detected = True
 
-    # Telegram Alert
     if no_helmet_detected:
         send_telegram_alert("🚨 Alert: No helmet detected!")
 
