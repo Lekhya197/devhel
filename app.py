@@ -1,26 +1,15 @@
 import os
 import sys
 import torch
+import gc
+import psutil
 from flask import Flask, request, jsonify
 from PIL import Image
 import numpy as np
 import io
 import requests
 
-# Setup Flask app
 app = Flask(__name__)
-@app.route('/')
-def index():
-    return '✅ Helmet Detection API is live'
-
-@app.route('/', methods=['GET'])
-def home():
-    return 'Helmet Detection API is live'
-
-@app.route('/healthz')
-def healthz():
-    return jsonify({"status": "ok"})
-
 
 # Add yolov5 to path
 sys.path.append('./yolov5')
@@ -30,8 +19,12 @@ from models.experimental import attempt_load
 from utils.general import non_max_suppression, scale_coords
 from utils.augmentations import letterbox
 
-# Load model
+# Force CPU only & limit PyTorch threads to save memory
+torch.cuda.is_available = lambda: False
 device = torch.device('cpu')
+torch.set_num_threads(1)
+
+# Load model once globally
 model = attempt_load('best.pt', device)
 model.eval()
 
@@ -48,11 +41,18 @@ def send_telegram_alert(message):
         except Exception as e:
             print("Failed to send Telegram alert:", e)
 
+def print_memory():
+    process = psutil.Process(os.getpid())
+    print(f'Memory usage: {process.memory_info().rss / (1024 * 1024):.2f} MB')
+
+@app.route('/')
+def index():
+    return '✅ Helmet Detection API is live'
+
 @app.route('/process_frame', methods=['POST'])
 def process_frame():
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
-
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
@@ -60,14 +60,13 @@ def process_frame():
     try:
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
-        img = img.resize((640, 640))  # Resize image here
         orig_img = np.array(img)
     except Exception as e:
         return jsonify({'error': 'Invalid image'}), 400
 
-    # preprocess with letterbox after resizing if you want
-    img_resized = letterbox(orig_img, new_shape=640)[0]
-    img_resized = img_resized.transpose((2, 0, 1))
+    # Resize smaller to reduce memory load - 320 instead of 640
+    img_resized = letterbox(orig_img, new_shape=320)[0]
+    img_resized = img_resized.transpose((2, 0, 1))  # HWC to CHW
     img_resized = np.ascontiguousarray(img_resized)
 
     img_tensor = torch.from_numpy(img_resized).to(device).float()
@@ -95,17 +94,14 @@ def process_frame():
     if no_helmet_detected:
         send_telegram_alert("🚨 Alert: No helmet detected!")
 
+    # Clean up to free memory immediately
+    del img_tensor, pred, img_resized, orig_img, img
+    gc.collect()
+
+    print_memory()
+
     return jsonify({'detections': detections})
-
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
-
-
-
-
-
