@@ -13,6 +13,9 @@ app = Flask(__name__)
 def index():
     return '✅ Helmet Detection API is live'
 
+@app.route('/', methods=['GET'])
+def home():
+    return 'Helmet Detection API is live'
 
 @app.route('/healthz')
 def healthz():
